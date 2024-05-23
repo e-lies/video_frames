@@ -1,0 +1,17 @@
+{
+  "name": "frame_selection",
+  "version": "1.0.0",
+  "description": "select the best frame from a video and add it as a thumbnail",
+  "main": "index.js",
+  "scripts": {
+    "test": "npm test"
+  },
+  "author": "Ilias Seddik",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "nodemon": "^3.1.0"
+  }
+}
