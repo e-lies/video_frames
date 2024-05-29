@@ -4,7 +4,8 @@
   "description": "select the best frame from a video and add it as a thumbnail",
   "main": "index.js",
   "scripts": {
-    "test": "npm test"
+    "test": "npm test",
+    "start": "nodemon index.js"
   },
   "author": "Ilias Seddik",
   "license": "ISC",
