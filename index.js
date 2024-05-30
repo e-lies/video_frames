@@ -37,9 +37,9 @@ app.post("/video", async (req,res) => {
 		`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ${filePath}`);
 		
 	let duration = parseInt(rawDuration.toString());
-	const frameNumber = Math.round(Math.log(duration)) * 4;
+	const frameNumber = Math.round(Math.log(duration)) * 2;
 	console.log("frameNumber", frameNumber, duration);
- 	let command = `ffmpeg -i ${filePath} -vf "thumbnail" -r 1/3 -q:v 1 -vframes ${frameNumber} ${folder}/frame-%02d.png`;
+ 	let command = `ffmpeg -i ${filePath} -vf "thumbnail" -r 1/3 -q:v 8 -vframes ${frameNumber} ${folder}/frame-%02d.png`;
 	let command2 = `ffmpeg -i ${filePath} -i ${__dirname}/${folder}/frame-01.png -map 1 -map 0 -c copy -disposition:0 attached_pic -y ${folder}/${name}_thumb.mxf`;
 
 	exec(command, (err, stdout, stderr) => {
@@ -55,35 +55,34 @@ app.post("/video", async (req,res) => {
 			let base64 = fs.readFileSync(`${folder}/frame-${i > 9 ? i : "0"+i}.png`, { encoding: 'base64' });
 			framesBase64.push({
 				type: "image_url", 
-				image_url: { url: `data:image/png;base64,${base64}`, detail: "low" }
+				image_url: { url: `data:image/png;base64,${base64}`, detail: "high" }
 			})
 		};
 		
 		const payload = {
 			"model": "gpt-4o",
+			"temperature": 0.1,
 			"messages": [
 				{
-					"role": "system",
-					"content": `Bonjour, je suis un bot qui peut vous aider à identifier une frame pertinente de très bonne qualité et qui donne une idée du conntenu de l'épisode:
-					 _Je répond avec un objet JSON contenant le numéro de la frame la plus pertinente et une petite explication. Exemple: {frame: 3, explanation: 'Cette frame est la plus pertinente car elle montre un moment clé du programme'}.
-					 `
+					role: "system",
+					content: `Hi, I'm a bot that can help you identify a relevant frame of good quality that doesn't have to be a transition between 2 scenes and without double exposure.
+					I respond with a JSON object containing the number of the most relevant frame, and a short description of this image and its quality. Example: {“frame”: 3, “explanation”: “This frame is the most relevant because it shows a key moment in the program and contains no double exposure”}.
+					Never select an image with composite or double exposure.
+					I need to choose an image with a clear scene.
+					It's not mandatory, but I prefer to avoid images from the credits of the program.`
 				},
 				  { "role": "user",
 				   "content": [
 						{
 							"type": "text", 
-							"text": `Voici une série de frames extraites d'une vidéo d'une emission, peux-tu me donner le numéro de la frame la plus pertinente ? sachant que:
-							_La frame doit être une scène de l'émission.
-					 _Elle doit être aussi nette que possible, sans flou ni artefacts.
-					 _Elle ne doit pas être composite ou une double exposition.
-					 _Elle ne doit pas faire partie du générique de début ou de fin de l'émission.
-					 _Elle doit éviter au maximum de contenir des éléments de transition entre les scènes qui pourrait être flous.`
+							"text": `gimme the best frame from these ones ?`
 						},
 						...framesBase64
 					] 
 				}
 			]
 		}
+	
 		fetch('https://api.openai.com/v1/chat/completions', {
 			method: 'POST',
 			headers: {
@@ -91,11 +90,15 @@ app.post("/video", async (req,res) => {
 				'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
 			},
 			body: JSON.stringify(payload)
-		}).then(response => response.json()).then(data =>{ 
+		}).then(response => {
+			console.log("response", response)
+			return response.json()
+		}).then(data =>{ 
 			const message = data.choices[0].message;
+			console.log("data from gpt = ",message)
 			const jsonContent = message?.content.match(/{.*?}/s)[0];
+			console.log("jsonContent", jsonContent)
 			const content = JSON.parse(jsonContent) || {};
-			console.log("jsonContent", content)
 			let i = content?.frame;
 			exec(`start ${__dirname}/${folder}/frame-${i > 9 ? i : "0"+i}.png`)
 			// execute a bash command to create a text file with the text of the "content" variable
