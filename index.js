@@ -6,6 +6,7 @@ const { configDotenv } = require("dotenv");
 const { exec, execSync } = require("child_process");
 
 const fs = require("fs");
+const { type } = require("os");
 
 //require("dotenv").config();
 
@@ -37,9 +38,10 @@ app.post("/video", async (req,res) => {
 		`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ${filePath}`);
 		
 	let duration = parseInt(rawDuration.toString());
-	const frameNumber = Math.round(Math.log(duration)) * 2;
-	console.log("frameNumber", frameNumber, duration);
- 	let command = `ffmpeg -i ${filePath} -vf "thumbnail" -r 1/3 -q:v 8 -vframes ${frameNumber} ${folder}/frame-%02d.png`;
+	const frameNumber = Math.round(Math.log(duration)) * 2	;
+	let step = Math.round(Math.log(duration));
+	console.log("frameNumber", frameNumber, duration,step);
+ 	let command = `ffmpeg -i ${filePath} -vf "thumbnail" -r 1/${step} -q:v 3 -vframes ${frameNumber} ${folder}/frame-%02d.png`;
 	let command2 = `ffmpeg -i ${filePath} -i ${__dirname}/${folder}/frame-01.png -map 1 -map 0 -c copy -disposition:0 attached_pic -y ${folder}/${name}_thumb.mxf`;
 
 	exec(command, (err, stdout, stderr) => {
@@ -55,29 +57,31 @@ app.post("/video", async (req,res) => {
 			let base64 = fs.readFileSync(`${folder}/frame-${i > 9 ? i : "0"+i}.png`, { encoding: 'base64' });
 			framesBase64.push({
 				type: "image_url", 
-				image_url: { url: `data:image/png;base64,${base64}`, detail: "high" }
+				image_url: { url: `data:image/png;base64,${base64}`, detail: "low" }
 			})
 		};
-		
-		const payload = {
+		const payload1 = {
 			"model": "gpt-4o",
-			"temperature": 0.1,
+			"temperature": 0.2,
 			"messages": [
 				{
 					role: "system",
-					content: `Hi, I'm a bot that can help you identify a relevant frame of good quality that doesn't have to be a transition between 2 scenes and without double exposure.
-					I respond with a JSON object containing the number of the most relevant frame, and a short description of this image and its quality. Example: {“frame”: 3, “explanation”: “This frame is the most relevant because it shows a key moment in the program and contains no double exposure”}.
-					Never select an image with composite or double exposure.
-					I need to choose an image with a clear scene.
-					It's not mandatory, but I prefer to avoid images from the credits of the program.`
+					type: "text",
+					content: `Tu es un bot qui a pour objectif de filtrer une série d'images issues d'une vidéo pour ne garder que les meilleures.
+							Les critères d'élimination d'une image sont:
+							- Si l'image est floue, elle doit être éliminée. 
+							- Si l'image contient une double exposition, elle doit être éliminée.
+							- Si l'image a trop de peu de contraste, elle doit être éliminée.
+							- Si une image contient beaucoup de texte, elle doit être éliminée.`
 				},
 				  { "role": "user",
 				   "content": [
+						...framesBase64,
 						{
 							"type": "text", 
-							"text": `gimme the best frame from these ones ?`
-						},
-						...framesBase64
+							"text": `Je voudrai la liste des frames que tu as choisi de garder dans un objet JSON, avec une clé "frames" qui sera un tableau avec leur numéro seulement, et une autre clé "explication" qui sera un tableau avec une explication pour chaque frame,
+							 exemple { "frames": [5, 7, 9], "explanation": "Les autres images sont floues ou bien sont des double expositions entre 2 scènes" }`
+						}
 					] 
 				}
 			]
@@ -89,24 +93,76 @@ app.post("/video", async (req,res) => {
 				'Content-Type': 'application/json',
 				'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
 			},
-			body: JSON.stringify(payload)
+			body: JSON.stringify(payload1)
 		}).then(response => {
 			console.log("response", response)
 			return response.json()
 		}).then(data =>{ 
-			const message = data.choices[0].message;
-			console.log("data from gpt = ",message)
-			const jsonContent = message?.content.match(/{.*?}/s)[0];
-			console.log("jsonContent", jsonContent)
-			const content = JSON.parse(jsonContent) || {};
-			let i = content?.frame;
-			exec(`start ${__dirname}/${folder}/frame-${i > 9 ? i : "0"+i}.png`)
-			// execute a bash command to create a text file with the text of the "content" variable
-			fs.writeFileSync(`${folder}/selectedFrame.txt`, `La frame seléctionnée est la ${i}. \n ${content?.explanation}`);
-			res.status(200).send(data);
+			try{
+				const message = data.choices[0].message;
+				const jsonContent = message?.content.match(/{.*?}/s)[0];
+				const content = JSON.parse(jsonContent) || {};
+				console.log("jsonContent", content)
+				const selectedFrames = content?.frames;
+				const framesBase642 = framesBase64.filter((frame, i) => selectedFrames.includes(parseInt(i)+1))
+				const payload2 = {
+					"model": "gpt-4o",
+					"temperature": 0.7,
+					"messages": [
+						{
+							role: "system",
+							type: "text",
+							content: `Je suis un bot qui a pour objectif de sélectionner la meilleure image parmi une suite de frames qui ont été extraites d'une vidéo. 
+							Je dois choisir la frame qui représente le mieux le contenu du programme TV dont sont issues les images.
+							Et je dois choisir une image qui est compréhensible et qui est bien cadrée, en évitant les frames avec des expressions faciales transitoires qui peuvent sembler étranges ou peu flatteuses.
+							Éviter au maximum les frames issue du générique de début ou de fin de programme.`
+						},
+						{ "role": "user",
+						"content": [
+							...framesBase642, 
+							{
+							"type": "text", 
+							"text": `Je voudrai la meilleure frame, et récupérer le résultat sous la forme un objet JSON contenant le numéro de la frame et une explication de ton choix, exemple { "frame": 5, "explication": "J'ai choisi cette image car elle est bien cadrée et représente une scène claire qui représente bien le contenu du programme" }`
+						}
+							] 
+						}
+					]
+				}
+				fetch('https://api.openai.com/v1/chat/completions', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+					},
+					body: JSON.stringify(payload2)
+				}).then(response => {
+					console.log("response = ", response)
+					return response.json()
+				}).then(data =>{
+					const message = data.choices[0].message;
+						const jsonContent = message?.content.match(/{.*?}/s)[0];
+					console.log("jsonContent", jsonContent)
+					const content = JSON.parse(jsonContent) || {};
+					let i = content?.frame;
+					let selectedFrame = selectedFrames[i-1];
+					exec(`start ${__dirname}/${folder}/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.png`)
+					// execute a bash command to create a text file with the text of the "content" variable
+					fs.writeFileSync(`${folder}/selectedFrame.txt`, `La frame seléctionnée est la ${selectedFrame}. \n ${content?.explanation}`); 
+					//recreate the selected frame in a new file in a folder named "selectedFrame"
+					fs.copyFileSync(`${ folder }/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.png`, `${ folder }/selectedFrame/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.png`);
+					res.status(200).send(data);
+				}).catch(err => {
+					console.error("error = ",err);
+					res.status(500).send("Error with GPT-4o in second request");
+				});
+
+			} catch (err) {
+				console.error("err = ", err);
+				res.status(500).send("Error with GPT-4o in the code");
+			}
 		}).catch(err => {
 			console.error(err);
-			res.status(500).send("Error with GPT-4o");
+			res.status(500).send("Error with GPT-4o in first request");
 		});
 
 		/*exec(command2, (err, stdout, stderr) => {
