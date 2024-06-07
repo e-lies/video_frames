@@ -146,9 +146,10 @@ app.post("/video", async (req,res) => {
 					let i = content?.frame;
 					let selectedFrame = selectedFrames[i-1];
 					exec(`start ${__dirname}/${folder}/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.png`)
-					// execute a bash command to create a text file with the text of the "content" variable
-					fs.writeFileSync(`${folder}/selectedFrame.txt`, `La frame seléctionnée est la ${selectedFrame}. \n ${content?.explanation}`); 
-					//recreate the selected frame in a new file in a folder named "selectedFrame"
+					
+					//recreate the selected frame in a new file in a folder named "selectedFrame" after creating the folder
+					fs.mkdirSync(`${folder}/selectedFrame`);
+					fs.writeFileSync(`${folder}/selectedFrame/selectedFrame.txt`, `La frame seléctionnée est la ${selectedFrame}. \n ${content?.explication}`); 
 					fs.copyFileSync(`${ folder }/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.png`, `${ folder }/selectedFrame/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.png`);
 					res.status(200).send(data);
 				}).catch(err => {
