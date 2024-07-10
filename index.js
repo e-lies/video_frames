@@ -1,5 +1,4 @@
-const 
-express = require("express");
+const express = require("express");
 
 const { configDotenv } = require("dotenv");
 
@@ -7,45 +6,61 @@ const { exec, execSync } = require("child_process");
 
 const fs = require("fs");
 const { type } = require("os");
+const https = require("https");
+const path = require("path");
 
 //require("dotenv").config();
 
 configDotenv("./.env");
 
+const basePath = "Q:\\\\FichierMasstech\\\\LOUISE_RESTORE\\\\"
+//const basePath = "C:\\\\projets_ai\\\\";
 //get the directory of the app knowing we're using ES modules
 
 //const appDir = dirname(new URL(import.meta.url).pathname);
 const app = express();
 
-const port = 300;
+const port = 3003;
 
 //read the body of the request
 app.use(express.json());
 
 
 app.post("/video", async (req,res) => {
-	console.log("body", req.body);
 	let { name, filePath, folder } = req.body;
-	folder = `thumbnails/Thumb_${folder}`;
-
+	folder = `Q:\\\\ExportPlateformes\\\\__NewThums_NePasEffacer_Fred\\\\Thumb_${folder}`;
+	//folder = `C:\\\\projets_ai\\\\Thumb_${folder}`;
 	//create the new folder if it does not exist, if exists remove it then create it again
+
+	console.log("video folder = ",`${basePath}${filePath}`)
+
 	if (fs.existsSync(folder)) {
 		fs.rmSync(folder, { recursive: true });
 	}
 	fs.mkdirSync(folder);
 	
 	let rawDuration = execSync(
-		`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ${filePath}`);
+		`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ${basePath}${filePath}`);
 		
 	let duration = parseInt(rawDuration.toString());
-	const frameNumber = Math.round(Math.log(duration)) * 2	;
+	const frameNumber = Math.round(Math.log(duration)) * 4;
+
+	let command0 = `ffmpeg -i ${basePath}${filePath} -vf bwdif=mode=send_field:parity=auto:deint=all -c:v mpeg2video -b:v 50M -minrate 50M -maxrate 50M -bufsize 2M -pix_fmt yuv422p -c:a copy ${folder}/${name}_deinterlaced.mxf`;
+
+
+	execSync(command0, (err, stdout, stderr) => {
+		if (err) {
+			console.error(err);
+			res.status(500).send("Error deinterlacing the video");
+		}
+		console.log("deinterlacing done successfully")
+	})
+
 	let step = Math.round(Math.log(duration));
-	console.log("frameNumber", frameNumber, duration,step);
- 	let command = `ffmpeg -i ${filePath} -vf "thumbnail" -r 1/${step} -q:v 3 -vframes ${frameNumber} ${folder}/frame-%02d.png`;
-	let command2 = `ffmpeg -i ${filePath} -i ${__dirname}/${folder}/frame-01.png -map 1 -map 0 -c copy -disposition:0 attached_pic -y ${folder}/${name}_thumb.mxf`;
+ 	let command = `ffmpeg -i ${folder}/${name}_deinterlaced.mxf -vf "thumbnail" -r 1/${step} -q:v 4 -vframes ${frameNumber} ${folder}/frame-%02d.jpg`;
+	let command2 = `ffmpeg -i ${basePath}${filePath} -i ${folder}/frame-01.jpg -map 1 -map 0 -c copy -disposition:0 attached_pic -y ${folder}/${name}_thumb.mxf`;
 
 	exec(command, (err, stdout, stderr) => {
-		console.log("stdout & stderr1", stdout);
 		if (err) {
 			console.error(err);
 			res.status(500).send("Error creating thumbnail in command 1");
@@ -54,10 +69,10 @@ app.post("/video", async (req,res) => {
 		const fs = require('fs');
 		let framesBase64 = [];
 		for (let i = 1; i <= frameNumber; i++) {
-			let base64 = fs.readFileSync(`${folder}/frame-${i > 9 ? i : "0"+i}.png`, { encoding: 'base64' });
+			let base64 = fs.readFileSync(`${folder}/frame-${i > 9 ? i : "0"+i}.jpg`, { encoding: 'base64' });
 			framesBase64.push({
 				type: "image_url", 
-				image_url: { url: `data:image/png;base64,${base64}`, detail: "low" }
+				image_url: { url: `data:image/jpeg;base64,${base64}`, detail: "low" }
 			})
 		};
 		const payload1 = {
@@ -80,7 +95,7 @@ app.post("/video", async (req,res) => {
 						{
 							"type": "text", 
 							"text": `Je voudrai la liste des frames que tu as choisi de garder dans un objet JSON, avec une clé "frames" qui sera un tableau avec leur numéro seulement, et une autre clé "explication" qui sera un tableau avec une explication pour chaque frame,
-							 exemple { "frames": [5, 7, 9], "explanation": "Les autres images sont floues ou bien sont des double expositions entre 2 scènes" }`
+							 exemple { "frames": [5, 7, 9], explication": "Les autres images sont floues ou bien sont des double expositions entre 2 scènes" }`
 						}
 					] 
 				}
@@ -95,14 +110,12 @@ app.post("/video", async (req,res) => {
 			},
 			body: JSON.stringify(payload1)
 		}).then(response => {
-			console.log("response", response)
 			return response.json()
 		}).then(data =>{ 
 			try{
 				const message = data.choices[0].message;
 				const jsonContent = message?.content.match(/{.*?}/s)[0];
 				const content = JSON.parse(jsonContent) || {};
-				console.log("jsonContent", content)
 				const selectedFrames = content?.frames;
 				const framesBase642 = framesBase64.filter((frame, i) => selectedFrames.includes(parseInt(i)+1))
 				const payload2 = {
@@ -128,6 +141,12 @@ app.post("/video", async (req,res) => {
 						}
 					]
 				}
+				fs.unlink(`${folder}/${name}_deinterlaced.mxf`, (err)=>{
+					if(err){
+						return console.log("failed to remove the altered video")
+					}
+					console.log("Altered video deleted sucessfully")
+				})		
 				fetch('https://api.openai.com/v1/chat/completions', {
 					method: 'POST',
 					headers: {
@@ -136,32 +155,36 @@ app.post("/video", async (req,res) => {
 					},
 					body: JSON.stringify(payload2)
 				}).then(response => {
-					console.log("response = ", response)
 					return response.json()
 				}).then(data =>{
 					const message = data.choices[0].message;
 						const jsonContent = message?.content.match(/{.*?}/s)[0];
-					console.log("jsonContent", jsonContent)
 					const content = JSON.parse(jsonContent) || {};
 					let i = content?.frame;
 					let selectedFrame = selectedFrames[i-1];
-					exec(`start ${__dirname}/${folder}/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.png`)
+					//exec(`start ${__dirname}/${folder}/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.jpg`)
 					
 					//recreate the selected frame in a new file in a folder named "selectedFrame" after creating the folder
 					fs.mkdirSync(`${folder}/selectedFrame`);
 					fs.writeFileSync(`${folder}/selectedFrame/selectedFrame.txt`, `La frame seléctionnée est la ${selectedFrame}. \n ${content?.explication}`); 
-					fs.copyFileSync(`${ folder }/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.png`, `${ folder }/selectedFrame/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.png`);
+					fs.copyFileSync(`${ folder }/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.jpg`, `${ folder }/selectedFrame/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.jpg`);
 					res.status(200).send(data);
 				}).catch(err => {
 					console.error("error = ",err);
 					res.status(500).send("Error with GPT-4o in second request");
-				});
+				}); 
 
 			} catch (err) {
 				console.error("err = ", err);
 				res.status(500).send("Error with GPT-4o in the code");
 			}
 		}).catch(err => {
+			fs.unlink(`${folder}/${name}_deinterlaced.mxf`, (err)=>{
+				if(err){
+					return console.log("failed to remove the altered video")
+				}
+				console.log("Altered video deleted sucessfully")
+			})
 			console.error(err);
 			res.status(500).send("Error with GPT-4o in first request");
 		});
@@ -176,7 +199,14 @@ app.post("/video", async (req,res) => {
 	});
 });
 
+const options = {
+	key: fs.readFileSync(path.join(__dirname, "localhost-key.pem")),
+	cert: fs.readFileSync(path.join(__dirname, "localhost.pem")),
+};
+  
+  // Create HTTPS server
+const server = https.createServer(options, app);
+
 app.listen(port, () => {
 	console.log(`Server running on port ${port} ${__dirname}`);
 });
-
