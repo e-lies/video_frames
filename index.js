@@ -28,15 +28,8 @@ const port = 3003;
 //read the body of the request
 app.use(express.json());
 
-
-app.post("/video", async (req,res) => {
-	try{
-		let { fileName } = req.body;
-		console.log("filename = ",fileName, JSON.stringify(req.body))
-		if (!fs.existsSync(`${basePath}${fileName}`)) {
-			return res.status(404).send("File not found");
-		}
-		const fileNameNoExt = fileName.split(".")[0];
+async function videoProcessing(fileName){
+	const fileNameNoExt = fileName.split(".")[0];
 		const folder = `${folderPath}\\\\WithDescription_${fileNameNoExt}`;
 		const mediaInfos = medias.find(media => media?.mediaIds.includes(fileNameNoExt));
 		const titre = mediaInfos?.titre ? `Le titre de l'épisode sur cette vidéo est : ${mediaInfos?.titre}.` : "";
@@ -61,17 +54,6 @@ app.post("/video", async (req,res) => {
 			
 		let duration = parseInt(rawDuration.toString());
 		const frameNumber = Math.round(Math.log(duration)) * 3;
-
-		/*let command0 = `ffmpeg -i ${basePath}${fileName} -vf bwdif=mode=send_field:parity=auto:deint=all -c:v mpeg2video -b:v 50M -minrate 50M -maxrate 50M -bufsize 2M -pix_fmt yuv422p -c:a copy ${folder}/${name}_deinterlaced.mxf`;
-
-
-		execSync(command0, (err, stdout, stderr) => {
-			if (err) {
-				console.error(err);
-				res.status(500).send("Error deinterlacing the video");
-			}
-			console.log("deinterlacing done successfully")
-		}) */
 
 		let step = Math.round(Math.log(duration));
 		let command = `ffmpeg -i ${basePath}${fileName} -vf "thumbnail" -r 1/${step} -q:v 1 -vframes ${frameNumber} ${folder}/frame-%02d.jpg`;
@@ -120,8 +102,7 @@ app.post("/video", async (req,res) => {
 						] 
 					}
 				]
-			}
-		
+			}		
 			fetch('https://api.openai.com/v1/chat/completions', {
 				method: 'POST',
 				headers: {
@@ -163,7 +144,6 @@ app.post("/video", async (req,res) => {
 							}
 						]
 					}
-
 					fetch('https://api.openai.com/v1/chat/completions', {
 						method: 'POST',
 						headers: {
@@ -180,8 +160,6 @@ app.post("/video", async (req,res) => {
 						const content = JSON.parse(jsonContent) || {};
 						let i = content?.frame;
 						let selectedFrame = selectedFrames[i-1];
-						//exec(`start ${__dirname}/${folder}/frame-${selectedFrame > 9 ? selectedFrame : "0"+selectedFrame}.jpg`)
-						
 						//recreate the selected frame in a new file in a folder named "selectedFrame" after creating the folder
 						fs.mkdirSync(`${folder}/selectedFrame`);
 						fs.writeFileSync(`${folder}/selectedFrame/selectedFrame.txt`, `La frame seléctionnée est la ${selectedFrame}. \n ${content?.explication}. \n ${titre} \n ${parentDescription} \n ${description}`); 
@@ -196,35 +174,35 @@ app.post("/video", async (req,res) => {
 								res.status(500).send("Error resizing or sharpening the selected frame");
 							}
 						}); */
-						res.status(200).send(data);
+						//res.status(200).send(data);
 					}).catch(err => {
 						console.error("error gpt = ",err);
-						res.status(500).send("Error with GPT-4o in second request");
+						//res.status(500).send("Error with GPT-4o in second request");
 					}); 
 
 				} catch (err) {
 					console.error("err = ", err);
-					res.status(500).send("Error with GPT-4o in the code");
+					//res.status(500).send("Error with GPT-4o in the code");
 				}
 			}).catch(err => {
-				/*fs.unlink(`${folder}/${name}_deinterlaced.mxf`, (err)=>{
-					if(err){
-						return console.log("failed to remove the altered video")
-					}
-					console.log("Altered video deleted sucessfully")
-				})*/
 				console.error(err);
-				res.status(500).send("Error with GPT-4o in first request");
+				//res.status(500).send("Error with GPT-4o in first request");
 			});
-
-			/*exec(command2, (err, stdout, stderr) => {
-			if (err) {
-				console.error(err);
-				res.status(500).send("Error creating thumbnail in command 2");
-			}
-			res.send("Video thumbnail created");
-			}); */
 		});
+}
+
+app.post("/video", async (req,res) => {
+	try{
+		let { fileName } = req.body;
+		console.log("filename = ",fileName, JSON.stringify(req.body))
+		if (!fs.existsSync(`${basePath}${fileName}`)) {
+			return res.status(203).send(`Fichier ${basePath}${fileName} non trouvé !`);
+		}
+		else{
+			videoProcessing(fileName)
+			return res.status(200).send(` Le fichier ${basePath}${fileName} a bien été trouvé.\n le traitement de la requête par une IA va commencer.`)
+		}
+		
 	}
 	catch(err){
 		res.status(500).send(`general error: ${err}`)
